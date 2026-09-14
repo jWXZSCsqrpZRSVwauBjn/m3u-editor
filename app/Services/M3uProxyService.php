@@ -1267,12 +1267,7 @@ class M3uProxyService
                 ]);
 
                 $url = PlaylistUrlService::getChannelUrl($channel, $playlist);
-                $format = $this->getFormatFromUrl($url);
-
-                // VOD channels: force /stream/ endpoint (see comment in direct stream creation path)
-                if (($channel->is_vod ?? false) && ($format === 'hls' || $format === 'm3u8')) {
-                    $format = 'raw';
-                }
+                $format = $this->getFormatFromUrl($url, $channel->is_vod ?? false);
 
                 return $this->buildProxyUrl($existingStreamId, $format, $username);
             } elseif ($existingStreamId && $isTimeshiftRequest) {
@@ -1452,7 +1447,7 @@ class M3uProxyService
                         $activeChannelStreams = self::getActiveStreamsCountByMetadata('original_channel_id', (string) $originalChannelId);
 
                         if ($activeChannelStreams > 0) {
-                            $format = $this->getFormatFromUrl($primaryUrl);
+                            $format = $this->getFormatFromUrl($primaryUrl, $channel->is_vod ?? false);
 
                             return $this->buildProxyUrl($existingStreamId, $format, $username);
                         }
@@ -1685,15 +1680,7 @@ class M3uProxyService
                 ProfileService::finalizeReservation($selectedProfile, $reservationId, $streamId, $originalChannelId, $originalPlaylistUuid);
             }
 
-            // Get the format from the URL
-            $format = $this->getFormatFromUrl($primaryUrl);
-
-            // For VOD channels, direct (non-transcoded) streams should always use the /stream/
-            // endpoint. Xtream VOD source URLs may end in .m3u8 but createStream() proxies raw
-            // bytes, not an HLS manifest. Live channels genuinely use HLS so their format is kept.
-            if (($actualChannel->is_vod ?? false) && ($format === 'hls' || $format === 'm3u8')) {
-                $format = 'raw';
-            }
+            $format = $this->getFormatFromUrl($primaryUrl, $actualChannel->is_vod ?? false);
 
             // Return the direct proxy URL using the stream ID
             return $this->buildProxyUrl($streamId, $format, $username);
@@ -1907,10 +1894,7 @@ class M3uProxyService
                             return $this->buildTranscodeStreamUrl($existingStreamId, $profile->format ?? 'ts', $username);
                         }
 
-                        $format = $this->getFormatFromUrl($url);
-                        if ($format === 'hls' || $format === 'm3u8') {
-                            $format = 'raw';
-                        }
+                        $format = $this->getFormatFromUrl($url, true);
 
                         return $this->buildProxyUrl($existingStreamId, $format, $username);
                     }
@@ -2090,14 +2074,7 @@ class M3uProxyService
                 ProfileService::finalizeReservation($selectedProfile, $reservationId, $streamId, $originalEpisodeId, $originalPlaylistUuid, 'episode');
             }
 
-            // For direct (non-transcoded) streams, always use the /stream/ endpoint.
-            // The source URL may have an .m3u8 extension (common for Xtream episode URLs),
-            // but createStream() proxies raw bytes — not an HLS manifest — so we must
-            // avoid buildProxyUrl routing to the /hls/ endpoint.
-            $format = $this->getFormatFromUrl($url);
-            if ($format === 'hls' || $format === 'm3u8') {
-                $format = 'raw';
-            }
+            $format = $this->getFormatFromUrl($url, true);
 
             // Return the direct proxy URL using the stream ID
             return $this->buildProxyUrl($streamId, $format, $username);
@@ -3016,7 +2993,9 @@ class M3uProxyService
     protected function buildProxyUrl(string $streamId, $format = 'hls', ?string $username = null): string
     {
         $baseUrl = $this->getPublicUrl();
-        if ($format === 'hls' || $format === 'm3u8') {
+        if ($format === 'auto') {
+            $url = $baseUrl.'/hls/'.$streamId.'/playlist.m3u8?auto=true';
+        } elseif ($format === 'hls' || $format === 'm3u8') {
             // HLS format: /hls/{stream_id}/playlist.m3u8
             $url = $baseUrl.'/hls/'.$streamId.'/playlist.m3u8';
         } elseif ($format === 'mpd' || $format === 'dash') {
@@ -3050,10 +3029,15 @@ class M3uProxyService
         return $url.$separator.http_build_query(['username' => $username]);
     }
 
-    private function getFormatFromUrl(?string $url): string
+    private function getFormatFromUrl(?string $url, bool $isOnDemand = false): string
     {
         $path = parse_url($url ?? '', PHP_URL_PATH) ?? $url ?? '';
         $format = pathinfo($path, PATHINFO_EXTENSION);
+
+        /** Let the proxy inspect the playback response without a separate provider probe. */
+        if ($isOnDemand && in_array(strtolower($format), ['', 'm3u8', 'hls'], true)) {
+            return 'auto';
+        }
 
         return $format === 'm3u8' ? 'hls' : $format;
     }
