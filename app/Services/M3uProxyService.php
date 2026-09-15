@@ -1447,7 +1447,7 @@ class M3uProxyService
                         $activeChannelStreams = self::getActiveStreamsCountByMetadata('original_channel_id', (string) $originalChannelId);
 
                         if ($activeChannelStreams > 0) {
-                            $format = $this->getFormatFromUrl($primaryUrl, $channel->is_vod ?? false);
+                            $format = $this->getFormatFromUrl($primaryUrl, $actualChannel->is_vod ?? false);
 
                             return $this->buildProxyUrl($existingStreamId, $format, $username);
                         }
@@ -3032,10 +3032,10 @@ class M3uProxyService
     private function getFormatFromUrl(?string $url, bool $isOnDemand = false): string
     {
         $path = parse_url($url ?? '', PHP_URL_PATH) ?? $url ?? '';
-        $format = pathinfo($path, PATHINFO_EXTENSION);
+        $format = strtolower(pathinfo($path, PATHINFO_EXTENSION));
 
         /** Let the proxy inspect the playback response without a separate provider probe. */
-        if ($isOnDemand && in_array(strtolower($format), ['', 'm3u8', 'hls'], true)) {
+        if ($isOnDemand && in_array($format, ['', 'm3u8', 'hls'], true)) {
             return 'auto';
         }
 
